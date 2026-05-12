@@ -4,6 +4,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
@@ -83,6 +84,112 @@ def _persist_dataframe(
         connection.commit()
 
 
+def _get_dataset_table_name(connection: sqlite3.Connection, dataset_id: str) -> str | None:
+    cursor = connection.execute(
+        "SELECT table_name FROM datasets WHERE dataset_id = ?",
+        (dataset_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return str(row[0])
+
+
+def _profile_numeric(series: pd.Series) -> dict[str, float]:
+    return {
+        "min": float(series.min()),
+        "max": float(series.max()),
+        "mean": float(series.mean()),
+        "median": float(series.median()),
+    }
+
+
+def _profile_categorical(series: pd.Series) -> dict[str, Any]:
+    top_counts = series.astype(str).value_counts().head(5)
+    return {
+        "unique_value_count": int(series.nunique(dropna=True)),
+        "top_values": [
+            {"value": value, "count": int(count)} for value, count in top_counts.items()
+        ],
+    }
+
+
+def _profile_datetime(series: pd.Series) -> dict[str, str | None]:
+    if series.empty:
+        return {"min_date": None, "max_date": None}
+    return {
+        "min_date": series.min().isoformat(),
+        "max_date": series.max().isoformat(),
+    }
+
+
+def _is_datetime_candidate(column_name: str) -> bool:
+    lower = column_name.lower()
+    return lower == "dt_customer" or "date" in lower or "dt" in lower
+
+
+def _build_profile(dataset_id: str) -> dict[str, Any]:
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No datasets found.")
+
+    with sqlite3.connect(DB_PATH) as connection:
+        table_name = _get_dataset_table_name(connection, dataset_id)
+        if not table_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Dataset '{dataset_id}' not found.",
+            )
+
+        safe_table_name = table_name.replace('"', '""')
+        dataframe = pd.read_sql_query(f'SELECT * FROM "{safe_table_name}"', connection)
+
+    row_count, column_count = dataframe.shape
+    columns: list[dict[str, Any]] = []
+
+    for column_name in dataframe.columns:
+        series = dataframe[column_name]
+        non_null = series.dropna()
+        column_profile: dict[str, Any] = {
+            "column_name": str(column_name),
+            "null_count": int(series.isna().sum()),
+        }
+
+        if _is_datetime_candidate(str(column_name)):
+            parsed_dates = pd.to_datetime(non_null, errors="coerce")
+            valid_dates = parsed_dates.dropna()
+            if not valid_dates.empty:
+                column_profile["detected_type"] = "datetime"
+                column_profile.update(_profile_datetime(valid_dates))
+                columns.append(column_profile)
+                continue
+
+        numeric_series = pd.to_numeric(non_null, errors="coerce")
+        valid_numeric = numeric_series.dropna()
+        if not non_null.empty and (len(valid_numeric) / len(non_null)) >= 0.8:
+            column_profile["detected_type"] = "numeric"
+            if not valid_numeric.empty:
+                column_profile.update(_profile_numeric(valid_numeric))
+            columns.append(column_profile)
+            continue
+
+        unique_count = int(non_null.nunique(dropna=True))
+        unique_ratio = (unique_count / len(non_null)) if len(non_null) else 0.0
+        if unique_count <= 50 or unique_ratio <= 0.2:
+            column_profile["detected_type"] = "categorical"
+            column_profile.update(_profile_categorical(non_null))
+        else:
+            column_profile["detected_type"] = "text"
+
+        columns.append(column_profile)
+
+    return {
+        "dataset_id": dataset_id,
+        "row_count": int(row_count),
+        "column_count": int(column_count),
+        "columns": columns,
+    }
+
+
 @router.post("/upload")
 async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
     filename = file.filename or ""
@@ -145,11 +252,8 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
 
 
 @router.get("/profile/{dataset_id}")
-async def get_dataset_profile(dataset_id: str) -> dict[str, str]:
-    return {
-        "dataset_id": dataset_id,
-        "message": "Not implemented yet. Next slice will compute profiling stats.",
-    }
+async def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
+    return await asyncio.to_thread(_build_profile, dataset_id)
 
 
 @router.post("/filter")
