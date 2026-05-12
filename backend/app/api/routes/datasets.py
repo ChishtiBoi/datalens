@@ -337,7 +337,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
     file_bytes = await file.read(MAX_UPLOAD_SIZE_BYTES + 1)
     if len(file_bytes) > MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="File too large. Maximum allowed size is 50MB.",
         )
 
