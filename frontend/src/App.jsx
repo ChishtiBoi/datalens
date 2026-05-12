@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -33,6 +33,7 @@ const CAMPAIGN_COLUMNS = [
   'response',
 ]
 const CHART_COLORS = ['#1d4ed8', '#0f766e', '#9333ea', '#dc2626', '#c2410c', '#0f766e']
+const EDUCATION_OPTIONS = ['Graduation', 'PhD', 'Master', 'Basic', '2n Cycle']
 
 const normalizeKey = (value) => value?.toString().trim().toLowerCase() ?? ''
 
@@ -167,6 +168,18 @@ const incomeVsSpendingScatter = (rows) =>
     })
     .filter(Boolean)
 
+const buildCharts = (rows) => {
+  const sampledRows = sampleRows(rows, 500)
+  return {
+    avgSpendingByEducation: averageSpendingByEducation(rows),
+    countByMaritalStatus: customerCountByMaritalStatus(rows),
+    incomeDistribution: incomeHistogram(sampledRows),
+    enrollmentByMonth: enrollmentsByMonth(rows),
+    campaignRates: campaignAcceptanceRates(rows),
+    incomeVsSpending: incomeVsSpendingScatter(sampledRows),
+  }
+}
+
 function App() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -176,7 +189,14 @@ function App() {
   const [uploadResult, setUploadResult] = useState(null)
   const [profile, setProfile] = useState(null)
   const [charts, setCharts] = useState(null)
+  const [datasetId, setDatasetId] = useState('')
+  const [educationFilters, setEducationFilters] = useState([])
+  const [maritalFilters, setMaritalFilters] = useState([])
+  const [maritalOptions, setMaritalOptions] = useState([])
+  const [incomeMin, setIncomeMin] = useState(0)
+  const [incomeMax, setIncomeMax] = useState(120000)
   const inputRef = useRef(null)
+  const filterRequestId = useRef(0)
 
   const setFile = (file) => {
     setError('')
@@ -228,7 +248,12 @@ function App() {
       }
 
       setUploadResult(responseBody)
+      setDatasetId(responseBody.dataset_id)
       setIsLoadingDashboard(true)
+      setEducationFilters([])
+      setMaritalFilters([])
+      setIncomeMin(0)
+      setIncomeMax(120000)
 
       const profileResponse = await fetch(`${API_BASE_URL}/profile/${responseBody.dataset_id}`)
       const profileBody = await profileResponse.json().catch(() => ({}))
@@ -248,23 +273,72 @@ function App() {
       }
 
       const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
-      const sampledRows = sampleRows(allRows, 500)
-      setCharts({
-        avgSpendingByEducation: averageSpendingByEducation(allRows),
-        countByMaritalStatus: customerCountByMaritalStatus(allRows),
-        incomeDistribution: incomeHistogram(sampledRows),
-        enrollmentByMonth: enrollmentsByMonth(allRows),
-        campaignRates: campaignAcceptanceRates(allRows),
-        incomeVsSpending: incomeVsSpendingScatter(sampledRows),
-      })
+      setCharts(buildCharts(allRows))
+      const maritalFromData = Array.from(
+        new Set(allRows.map((row) => getValue(row, 'marital_status')).filter(Boolean)),
+      ).map((value) => value.toString())
+      setMaritalOptions(maritalFromData.sort((a, b) => a.localeCompare(b)))
     } catch (uploadError) {
       setError(uploadError.message || 'Unexpected error while uploading file.')
       setProfile(null)
       setCharts(null)
+      setDatasetId('')
     } finally {
       setIsUploading(false)
       setIsLoadingDashboard(false)
     }
+  }
+
+  useEffect(() => {
+    if (!datasetId) return
+
+    const applyFilters = async () => {
+      setIsLoadingDashboard(true)
+      const requestId = filterRequestId.current + 1
+      filterRequestId.current = requestId
+
+      const payload = { dataset_id: datasetId }
+      if (educationFilters.length || maritalFilters.length) {
+        payload.categorical_filters = {}
+        if (educationFilters.length) payload.categorical_filters.Education = educationFilters
+        if (maritalFilters.length) payload.categorical_filters.Marital_Status = maritalFilters
+      }
+      if (incomeMin > 0 || incomeMax < 120000) {
+        payload.numeric_range = {
+          Income: { min: incomeMin, max: incomeMax },
+        }
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/filter`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const responseBody = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(responseBody.detail || 'Failed to apply filters.')
+        }
+
+        if (filterRequestId.current !== requestId) return
+        const rows = Array.isArray(responseBody.rows) ? responseBody.rows : []
+        setCharts(buildCharts(rows))
+      } catch (filterError) {
+        if (filterRequestId.current !== requestId) return
+        setError(filterError.message || 'Failed to refresh dashboard with filters.')
+      } finally {
+        if (filterRequestId.current === requestId) setIsLoadingDashboard(false)
+      }
+    }
+
+    applyFilters()
+  }, [datasetId, educationFilters, maritalFilters, incomeMin, incomeMax])
+
+  const clearAllFilters = () => {
+    setEducationFilters([])
+    setMaritalFilters([])
+    setIncomeMin(0)
+    setIncomeMax(120000)
   }
 
   return (
@@ -352,7 +426,7 @@ function App() {
           </div>
         )}
 
-        {profile && charts && !isLoadingDashboard && (
+        {profile && charts && (
           <section className="mt-8">
             <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
               <p>
@@ -361,8 +435,93 @@ function App() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+              <aside className="w-full rounded-xl border border-slate-200 bg-white p-4 lg:sticky lg:top-4 lg:w-72">
+                <h3 className="text-sm font-semibold text-slate-700">Filters</h3>
+
+                <div className="mt-4">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Education
+                  </label>
+                  <select
+                    multiple
+                    value={educationFilters}
+                    onChange={(event) =>
+                      setEducationFilters(
+                        Array.from(event.target.selectedOptions, (option) => option.value),
+                      )
+                    }
+                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    {EDUCATION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mt-4">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Marital Status
+                  </label>
+                  <select
+                    multiple
+                    value={maritalFilters}
+                    onChange={(event) =>
+                      setMaritalFilters(
+                        Array.from(event.target.selectedOptions, (option) => option.value),
+                      )
+                    }
+                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    {maritalOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mt-4">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Income Range ({incomeMin} - {incomeMax})
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="120000"
+                    value={incomeMin}
+                    onChange={(event) => {
+                      const nextMin = Number(event.target.value)
+                      setIncomeMin(Math.min(nextMin, incomeMax))
+                    }}
+                    className="w-full"
+                  />
+                  <input
+                    type="range"
+                    min="0"
+                    max="120000"
+                    value={incomeMax}
+                    onChange={(event) => {
+                      const nextMax = Number(event.target.value)
+                      setIncomeMax(Math.max(nextMax, incomeMin))
+                    }}
+                    className="mt-2 w-full"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  Clear All Filters
+                </button>
+              </aside>
+
+              <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   1. Average Spending by Education
                 </h3>
@@ -383,9 +542,9 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
 
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   2. Customer Count by Marital Status
                 </h3>
@@ -400,9 +559,9 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
 
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   3. Income Distribution (10 bins)
                 </h3>
@@ -417,9 +576,9 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
 
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   4. Enrollment Count by Month
                 </h3>
@@ -434,9 +593,9 @@ function App() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
 
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   5. Campaign Acceptance Rates
                 </h3>
@@ -455,9 +614,9 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
 
-              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   6. Income vs Total Spending (sampled)
                 </h3>
@@ -472,7 +631,8 @@ function App() {
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
-              </article>
+                </article>
+              </div>
             </div>
           </section>
         )}
