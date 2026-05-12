@@ -200,6 +200,7 @@ function App() {
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [summaryText, setSummaryText] = useState('')
   const [isSummaryLoading, setIsSummaryLoading] = useState(false)
+  const [hasInitialized, setHasInitialized] = useState(false)
   const inputRef = useRef(null)
   const filterRequestId = useRef(0)
 
@@ -228,6 +229,52 @@ function App() {
     setFile(file)
   }
 
+  const loadDatasetById = async (nextDatasetId, metadata = null) => {
+    setDatasetId(nextDatasetId)
+    setIsLoadingDashboard(true)
+    setError('')
+    setEducationFilters([])
+    setMaritalFilters([])
+    setIncomeMin(0)
+    setIncomeMax(120000)
+    setChatMessages([])
+    setChatInput('')
+    setSummaryText('')
+
+    const profileResponse = await fetch(`${API_BASE_URL}/profile/${nextDatasetId}`)
+    const profileBody = await profileResponse.json().catch(() => ({}))
+    if (!profileResponse.ok) {
+      throw new Error(profileBody.detail || 'Failed to load dataset profile.')
+    }
+    setProfile(profileBody)
+
+    const filterResponse = await fetch(`${API_BASE_URL}/filter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: nextDatasetId }),
+    })
+    const filterBody = await filterResponse.json().catch(() => ({}))
+    if (!filterResponse.ok) {
+      throw new Error(filterBody.detail || 'Failed to load dataset rows.')
+    }
+
+    const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
+    setCharts(buildCharts(allRows))
+    const maritalFromData = Array.from(
+      new Set(allRows.map((row) => getValue(row, 'marital_status')).filter(Boolean)),
+    ).map((value) => value.toString())
+    setMaritalOptions(maritalFromData.sort((a, b) => a.localeCompare(b)))
+
+    if (metadata) {
+      setUploadResult({
+        dataset_id: metadata.dataset_id,
+        filename: metadata.filename,
+        row_count: metadata.row_count,
+        column_count: profileBody.column_count,
+      })
+    }
+  }
+
   const handleUpload = async () => {
     if (!selectedFile) {
       setError('Please choose a CSV file before uploading.')
@@ -253,39 +300,7 @@ function App() {
       }
 
       setUploadResult(responseBody)
-      setDatasetId(responseBody.dataset_id)
-      setIsLoadingDashboard(true)
-      setEducationFilters([])
-      setMaritalFilters([])
-      setIncomeMin(0)
-      setIncomeMax(120000)
-      setChatMessages([])
-      setChatInput('')
-      setSummaryText('')
-
-      const profileResponse = await fetch(`${API_BASE_URL}/profile/${responseBody.dataset_id}`)
-      const profileBody = await profileResponse.json().catch(() => ({}))
-      if (!profileResponse.ok) {
-        throw new Error(profileBody.detail || 'Failed to load dataset profile.')
-      }
-      setProfile(profileBody)
-
-      const filterResponse = await fetch(`${API_BASE_URL}/filter`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset_id: responseBody.dataset_id }),
-      })
-      const filterBody = await filterResponse.json().catch(() => ({}))
-      if (!filterResponse.ok) {
-        throw new Error(filterBody.detail || 'Failed to load dataset rows.')
-      }
-
-      const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
-      setCharts(buildCharts(allRows))
-      const maritalFromData = Array.from(
-        new Set(allRows.map((row) => getValue(row, 'marital_status')).filter(Boolean)),
-      ).map((value) => value.toString())
-      setMaritalOptions(maritalFromData.sort((a, b) => a.localeCompare(b)))
+      await loadDatasetById(responseBody.dataset_id, responseBody)
     } catch (uploadError) {
       setError(uploadError.message || 'Unexpected error while uploading file.')
       setProfile(null)
@@ -297,6 +312,31 @@ function App() {
       setIsLoadingDashboard(false)
     }
   }
+
+  useEffect(() => {
+    if (hasInitialized) return
+
+    const initializeFromDatasets = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/datasets`)
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(body.detail || 'Failed to load previous datasets.')
+        }
+        const datasets = Array.isArray(body.datasets) ? body.datasets : []
+        if (datasets.length > 0) {
+          await loadDatasetById(datasets[0].dataset_id, datasets[0])
+        }
+      } catch (initError) {
+        setError(initError.message || 'Could not restore previous dataset.')
+      } finally {
+        setHasInitialized(true)
+        setIsLoadingDashboard(false)
+      }
+    }
+
+    initializeFromDatasets()
+  }, [hasInitialized])
 
   useEffect(() => {
     if (!datasetId) return

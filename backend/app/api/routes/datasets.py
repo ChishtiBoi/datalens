@@ -280,6 +280,45 @@ def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
     }
 
 
+def _list_datasets() -> dict[str, list[dict[str, Any]]]:
+    if not DB_PATH.exists():
+        return {"datasets": []}
+
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS datasets (
+                dataset_id TEXT PRIMARY KEY,
+                table_name TEXT NOT NULL UNIQUE,
+                filename TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                column_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        rows = connection.execute(
+            """
+            SELECT dataset_id, filename, row_count, created_at
+            FROM datasets
+            ORDER BY datetime(created_at) DESC
+            """
+        ).fetchall()
+
+    return {
+        "datasets": [
+            {
+                "dataset_id": str(row["dataset_id"]),
+                "filename": str(row["filename"]),
+                "row_count": int(row["row_count"]),
+                "uploaded_at": str(row["created_at"]),
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/upload")
 async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
     filename = file.filename or ""
@@ -344,6 +383,11 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
 @router.get("/profile/{dataset_id}")
 async def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(_build_profile, dataset_id)
+
+
+@router.get("/datasets")
+async def list_datasets() -> dict[str, list[dict[str, Any]]]:
+    return await asyncio.to_thread(_list_datasets)
 
 
 @router.post("/filter")
