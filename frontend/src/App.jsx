@@ -195,6 +195,9 @@ function App() {
   const [maritalOptions, setMaritalOptions] = useState([])
   const [incomeMin, setIncomeMin] = useState(0)
   const [incomeMax, setIncomeMax] = useState(120000)
+  const [chatInput, setChatInput] = useState('')
+  const [chatMessages, setChatMessages] = useState([])
+  const [isChatLoading, setIsChatLoading] = useState(false)
   const inputRef = useRef(null)
   const filterRequestId = useRef(0)
 
@@ -254,6 +257,8 @@ function App() {
       setMaritalFilters([])
       setIncomeMin(0)
       setIncomeMax(120000)
+      setChatMessages([])
+      setChatInput('')
 
       const profileResponse = await fetch(`${API_BASE_URL}/profile/${responseBody.dataset_id}`)
       const profileBody = await profileResponse.json().catch(() => ({}))
@@ -339,6 +344,45 @@ function App() {
     setMaritalFilters([])
     setIncomeMin(0)
     setIncomeMax(120000)
+  }
+
+  const handleSendChat = async () => {
+    if (!datasetId || !chatInput.trim()) return
+
+    const userMessage = { role: 'user', content: chatInput.trim() }
+    const nextMessages = [...chatMessages, userMessage]
+    setChatMessages(nextMessages)
+    setChatInput('')
+    setIsChatLoading(true)
+    setError('')
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataset_id: datasetId,
+          message: userMessage.content,
+          history: chatMessages,
+        }),
+      })
+      const responseBody = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(responseBody.detail || 'Failed to get assistant response.')
+      }
+
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: responseBody.answer || 'No answer returned.' },
+      ])
+    } catch (chatError) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `Error: ${chatError.message || 'Chat request failed.'}` },
+      ])
+    } finally {
+      setIsChatLoading(false)
+    }
   }
 
   return (
@@ -633,6 +677,72 @@ function App() {
                 </div>
                 </article>
               </div>
+
+              <aside className="flex h-[880px] w-full flex-col rounded-xl border border-slate-200 bg-white lg:w-80">
+                <div className="border-b border-slate-200 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-slate-700">Chat Assistant</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Ask questions about the uploaded dataset.
+                  </p>
+                </div>
+
+                <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+                  {chatMessages.length === 0 && (
+                    <p className="rounded-lg bg-slate-100 p-3 text-xs text-slate-500">
+                      No messages yet. Try: "Which education group spends most on wines?"
+                    </p>
+                  )}
+                  {chatMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[90%] rounded-xl px-3 py-2 text-sm ${
+                          message.role === 'user'
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-800'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    </div>
+                  ))}
+                  {isChatLoading && (
+                    <div className="flex justify-start">
+                      <div className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                        Analyzing data...
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-slate-200 p-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(event) => setChatInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          handleSendChat()
+                        }
+                      }}
+                      placeholder="Ask about your data..."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendChat}
+                      disabled={isChatLoading || !datasetId}
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </aside>
             </div>
           </section>
         )}
