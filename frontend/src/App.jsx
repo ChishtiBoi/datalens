@@ -1,11 +1,181 @@
 import { useRef, useState } from 'react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
+const API_BASE_URL = 'http://localhost:8000'
+const SPENDING_COLUMNS = [
+  'mntwines',
+  'mntfruits',
+  'mntmeatproducts',
+  'mntfishproducts',
+  'mntsweetproducts',
+  'mntgoldprods',
+]
+const CAMPAIGN_COLUMNS = [
+  'acceptedcmp1',
+  'acceptedcmp2',
+  'acceptedcmp3',
+  'acceptedcmp4',
+  'acceptedcmp5',
+  'response',
+]
+const CHART_COLORS = ['#1d4ed8', '#0f766e', '#9333ea', '#dc2626', '#c2410c', '#0f766e']
+
+const normalizeKey = (value) => value?.toString().trim().toLowerCase() ?? ''
+
+const getValue = (row, ...aliases) => {
+  for (const alias of aliases) {
+    const exact = row[alias]
+    if (exact !== undefined) return exact
+    const normalizedAlias = normalizeKey(alias)
+    for (const key of Object.keys(row)) {
+      if (normalizeKey(key) === normalizedAlias) return row[key]
+    }
+  }
+  return null
+}
+
+const toNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+const averageSpendingByEducation = (rows) => {
+  const bucket = new Map()
+  for (const row of rows) {
+    const education = getValue(row, 'education') ?? 'Unknown'
+    const key = education.toString()
+    if (!bucket.has(key)) {
+      bucket.set(key, { education: key, sums: {}, count: 0 })
+      SPENDING_COLUMNS.forEach((column) => {
+        bucket.get(key).sums[column] = 0
+      })
+    }
+    const entry = bucket.get(key)
+    entry.count += 1
+    SPENDING_COLUMNS.forEach((column) => {
+      const numeric = toNumber(getValue(row, column))
+      entry.sums[column] += numeric ?? 0
+    })
+  }
+
+  return Array.from(bucket.values()).map((entry) => ({
+    education: entry.education,
+    wines: Number((entry.sums.mntwines / entry.count).toFixed(2)),
+    fruits: Number((entry.sums.mntfruits / entry.count).toFixed(2)),
+    meat: Number((entry.sums.mntmeatproducts / entry.count).toFixed(2)),
+    fish: Number((entry.sums.mntfishproducts / entry.count).toFixed(2)),
+    sweets: Number((entry.sums.mntsweetproducts / entry.count).toFixed(2)),
+    gold: Number((entry.sums.mntgoldprods / entry.count).toFixed(2)),
+  }))
+}
+
+const customerCountByMaritalStatus = (rows) => {
+  const counts = new Map()
+  for (const row of rows) {
+    const status = getValue(row, 'marital_status') ?? 'Unknown'
+    const key = status.toString()
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return Array.from(counts.entries()).map(([maritalStatus, count]) => ({ maritalStatus, count }))
+}
+
+const incomeHistogram = (rows) => {
+  const incomes = rows
+    .map((row) => toNumber(getValue(row, 'income')))
+    .filter((value) => value !== null)
+  if (!incomes.length) return []
+
+  const min = Math.min(...incomes)
+  const max = Math.max(...incomes)
+  const binSize = (max - min) / 10 || 1
+  const bins = Array.from({ length: 10 }, (_, index) => ({
+    range: `${Math.round(min + index * binSize)}-${Math.round(min + (index + 1) * binSize)}`,
+    count: 0,
+  }))
+
+  incomes.forEach((income) => {
+    const idx = Math.min(9, Math.floor((income - min) / binSize))
+    bins[idx].count += 1
+  })
+  return bins
+}
+
+const enrollmentsByMonth = (rows) => {
+  const counts = new Map()
+  for (const row of rows) {
+    const raw = getValue(row, 'dt_customer')
+    if (!raw) continue
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) continue
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
+    counts.set(month, (counts.get(month) ?? 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, count]) => ({ month, count }))
+}
+
+const campaignAcceptanceRates = (rows) => {
+  const totals = Object.fromEntries(CAMPAIGN_COLUMNS.map((column) => [column, 0]))
+  const rowCount = rows.length || 1
+  for (const row of rows) {
+    CAMPAIGN_COLUMNS.forEach((column) => {
+      const value = toNumber(getValue(row, column))
+      totals[column] += value ?? 0
+    })
+  }
+  return CAMPAIGN_COLUMNS.map((column) => ({
+    campaign: column,
+    accepted: totals[column],
+    rate: Number(((totals[column] / rowCount) * 100).toFixed(2)),
+  }))
+}
+
+const sampleRows = (rows, maxSize) => {
+  if (rows.length <= maxSize) return rows
+  const sampled = []
+  const step = rows.length / maxSize
+  for (let i = 0; i < maxSize; i += 1) sampled.push(rows[Math.floor(i * step)])
+  return sampled
+}
+
+const incomeVsSpendingScatter = (rows) =>
+  rows
+    .map((row) => {
+      const income = toNumber(getValue(row, 'income'))
+      if (income === null) return null
+      const totalSpending = SPENDING_COLUMNS.reduce((sum, column) => {
+        const value = toNumber(getValue(row, column))
+        return sum + (value ?? 0)
+      }, 0)
+      return { income, spending: Number(totalSpending.toFixed(2)) }
+    })
+    .filter(Boolean)
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
   const [error, setError] = useState('')
   const [uploadResult, setUploadResult] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [charts, setCharts] = useState(null)
   const inputRef = useRef(null)
 
   const setFile = (file) => {
@@ -58,10 +228,42 @@ function App() {
       }
 
       setUploadResult(responseBody)
+      setIsLoadingDashboard(true)
+
+      const profileResponse = await fetch(`${API_BASE_URL}/profile/${responseBody.dataset_id}`)
+      const profileBody = await profileResponse.json().catch(() => ({}))
+      if (!profileResponse.ok) {
+        throw new Error(profileBody.detail || 'Failed to load dataset profile.')
+      }
+      setProfile(profileBody)
+
+      const filterResponse = await fetch(`${API_BASE_URL}/filter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataset_id: responseBody.dataset_id }),
+      })
+      const filterBody = await filterResponse.json().catch(() => ({}))
+      if (!filterResponse.ok) {
+        throw new Error(filterBody.detail || 'Failed to load dataset rows.')
+      }
+
+      const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
+      const sampledRows = sampleRows(allRows, 500)
+      setCharts({
+        avgSpendingByEducation: averageSpendingByEducation(allRows),
+        countByMaritalStatus: customerCountByMaritalStatus(allRows),
+        incomeDistribution: incomeHistogram(sampledRows),
+        enrollmentByMonth: enrollmentsByMonth(allRows),
+        campaignRates: campaignAcceptanceRates(allRows),
+        incomeVsSpending: incomeVsSpendingScatter(sampledRows),
+      })
     } catch (uploadError) {
       setError(uploadError.message || 'Unexpected error while uploading file.')
+      setProfile(null)
+      setCharts(null)
     } finally {
       setIsUploading(false)
+      setIsLoadingDashboard(false)
     }
   }
 
@@ -73,8 +275,8 @@ function App() {
         </div>
       </nav>
 
-      <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-5xl items-center justify-center p-6">
-        <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+      <main className="mx-auto w-full max-w-6xl p-6">
+        <section className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
           <h2 className="text-center text-2xl font-semibold">Upload CSV Dataset</h2>
           <p className="mt-2 text-center text-sm text-slate-500">
             Drag and drop your CSV file here, or click to browse.
@@ -142,6 +344,138 @@ function App() {
             </div>
           )}
         </section>
+
+        {isLoadingDashboard && (
+          <div className="mt-8 flex items-center justify-center gap-2 text-slate-600">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+            Building dashboard...
+          </div>
+        )}
+
+        {profile && charts && !isLoadingDashboard && (
+          <section className="mt-8">
+            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+              <p>
+                Profile loaded: <span className="font-semibold">{profile.row_count}</span> rows and{' '}
+                <span className="font-semibold">{profile.column_count}</span> columns.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  1. Average Spending by Education
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={charts.avgSpendingByEducation}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="education" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="wines" fill="#1d4ed8" />
+                      <Bar dataKey="fruits" fill="#0f766e" />
+                      <Bar dataKey="meat" fill="#9333ea" />
+                      <Bar dataKey="fish" fill="#dc2626" />
+                      <Bar dataKey="sweets" fill="#c2410c" />
+                      <Bar dataKey="gold" fill="#0f172a" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  2. Customer Count by Marital Status
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={charts.countByMaritalStatus}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="maritalStatus" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#2563eb" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  3. Income Distribution (10 bins)
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={charts.incomeDistribution}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="range" interval={1} angle={-25} textAnchor="end" height={60} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#0891b2" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  4. Enrollment Count by Month
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={charts.enrollmentByMonth}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="count" stroke="#7c3aed" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  5. Campaign Acceptance Rates
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={charts.campaignRates}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="campaign" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="rate" name="Acceptance Rate (%)">
+                        {charts.campaignRates.map((entry, index) => (
+                          <Cell key={`${entry.campaign}-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                  6. Income vs Total Spending (sampled)
+                </h3>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="income" name="Income" />
+                      <YAxis dataKey="spending" name="Total Spending" />
+                      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                      <Scatter data={charts.incomeVsSpending} fill="#dc2626" />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+            </div>
+          </section>
+        )}
       </main>
     </div>
   )
