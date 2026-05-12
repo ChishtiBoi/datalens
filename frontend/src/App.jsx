@@ -198,6 +198,8 @@ function App() {
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState([])
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const [summaryText, setSummaryText] = useState('')
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false)
   const inputRef = useRef(null)
   const filterRequestId = useRef(0)
 
@@ -259,6 +261,7 @@ function App() {
       setIncomeMax(120000)
       setChatMessages([])
       setChatInput('')
+      setSummaryText('')
 
       const profileResponse = await fetch(`${API_BASE_URL}/profile/${responseBody.dataset_id}`)
       const profileBody = await profileResponse.json().catch(() => ({}))
@@ -288,6 +291,7 @@ function App() {
       setProfile(null)
       setCharts(null)
       setDatasetId('')
+      setSummaryText('')
     } finally {
       setIsUploading(false)
       setIsLoadingDashboard(false)
@@ -382,6 +386,29 @@ function App() {
       ])
     } finally {
       setIsChatLoading(false)
+    }
+  }
+
+  const handleGenerateSummary = async () => {
+    if (!datasetId) return
+    setIsSummaryLoading(true)
+    setError('')
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataset_id: datasetId }),
+      })
+      const responseBody = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(responseBody.detail || 'Failed to generate executive summary.')
+      }
+      setSummaryText(responseBody.summary || '')
+    } catch (summaryError) {
+      setError(summaryError.message || 'Executive summary request failed.')
+    } finally {
+      setIsSummaryLoading(false)
     }
   }
 
@@ -743,6 +770,30 @@ function App() {
                   </div>
                 </div>
               </aside>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-base font-semibold text-slate-800">Executive Summary</h3>
+                <button
+                  type="button"
+                  onClick={handleGenerateSummary}
+                  disabled={isSummaryLoading || !datasetId}
+                  className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSummaryLoading ? 'Generating...' : 'Generate Executive Summary'}
+                </button>
+              </div>
+
+              {isSummaryLoading && (
+                <p className="mt-3 text-sm text-slate-600">Generating executive summary...</p>
+              )}
+
+              {!isSummaryLoading && summaryText && (
+                <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap">
+                  {summaryText}
+                </div>
+              )}
             </div>
           </section>
         )}

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from app.api.routes.datasets import _build_profile
 from app.core.config import settings
 
 
@@ -25,6 +26,10 @@ class ChatRequest(BaseModel):
     dataset_id: str
     message: str
     history: list[ChatMessage] = Field(default_factory=list)
+
+
+class SummaryRequest(BaseModel):
+    dataset_id: str
 
 
 def _load_dataset(dataset_id: str) -> pd.DataFrame:
@@ -231,8 +236,7 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return {"error": f"Unknown tool '{name}'."}
 
 
-@router.post("/chat")
-async def chat_with_data(request: ChatRequest) -> dict[str, str]:
+def _get_openai_client() -> OpenAI:
     if settings.llm_provider.lower() != "openai":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -243,8 +247,12 @@ async def chat_with_data(request: ChatRequest) -> dict[str, str]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OPENAI_API_KEY is not configured.",
         )
+    return OpenAI(api_key=settings.openai_api_key)
 
-    client = OpenAI(api_key=settings.openai_api_key)
+
+@router.post("/chat")
+async def chat_with_data(request: ChatRequest) -> dict[str, str]:
+    client = _get_openai_client()
     messages: list[dict[str, Any]] = [
         {
             "role": "system",
@@ -308,5 +316,28 @@ async def chat_with_data(request: ChatRequest) -> dict[str, str]:
 
 
 @router.post("/summary")
-async def generate_summary() -> dict[str, str]:
-    return {"message": "Not implemented yet. Next slice will add executive summary generation."}
+async def generate_summary(request: SummaryRequest) -> dict[str, str]:
+    client = _get_openai_client()
+    profile = _build_profile(request.dataset_id)
+    response = client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a senior business analyst. Write a concise executive summary "
+                    "(4-6 paragraphs) of this marketing campaign dataset. Cover: key "
+                    "demographic patterns, spending behavior by segment, campaign effectiveness, "
+                    "data quality issues (mention the 24 null Income values and the unusual "
+                    "Marital_Status values: YOLO, Absurd, Alone), and 2-3 actionable "
+                    "recommendations. Write in business language, not technical language."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Dataset profile JSON:\n{json.dumps(profile)}",
+            },
+        ],
+    )
+    summary = response.choices[0].message.content or "No summary generated."
+    return {"summary": summary}
