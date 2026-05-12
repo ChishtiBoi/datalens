@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from pydantic import BaseModel, Field
 
 
 router = APIRouter(tags=["datasets"])
@@ -17,6 +18,17 @@ MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 BACKEND_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BACKEND_DIR / "data"
 DB_PATH = DATA_DIR / "datalens.db"
+
+
+class NumericBounds(BaseModel):
+    min: float | None = None
+    max: float | None = None
+
+
+class FilterRequest(BaseModel):
+    dataset_id: str
+    categorical_filters: dict[str, list[str]] | None = None
+    numeric_range: dict[str, NumericBounds] | None = None
 
 
 def _sanitize_identifier(value: str, fallback: str) -> str:
@@ -190,6 +202,84 @@ def _build_profile(dataset_id: str) -> dict[str, Any]:
     }
 
 
+def _resolve_column_name(requested_name: str, table_columns: list[str]) -> str | None:
+    if requested_name in table_columns:
+        return requested_name
+
+    table_lookup = {column.lower(): column for column in table_columns}
+    lower_requested = requested_name.lower()
+    if lower_requested in table_lookup:
+        return table_lookup[lower_requested]
+
+    sanitized_requested = _sanitize_identifier(requested_name, "col")
+    for column in table_columns:
+        if _sanitize_identifier(column, "col") == sanitized_requested:
+            return column
+    return None
+
+
+def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No datasets found.")
+
+    with sqlite3.connect(DB_PATH) as connection:
+        table_name = _get_dataset_table_name(connection, request.dataset_id)
+        if not table_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Dataset '{request.dataset_id}' not found.",
+            )
+
+        safe_table_name = table_name.replace('"', '""')
+        cursor = connection.execute(f'PRAGMA table_info("{safe_table_name}")')
+        table_columns = [str(row[1]) for row in cursor.fetchall()]
+
+        where_clauses: list[str] = []
+        query_params: list[Any] = []
+
+        if request.categorical_filters:
+            for requested_column, values in request.categorical_filters.items():
+                if not values:
+                    continue
+                resolved_column = _resolve_column_name(requested_column, table_columns)
+                if not resolved_column:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Unknown categorical filter column: '{requested_column}'.",
+                    )
+                placeholders = ", ".join("?" for _ in values)
+                safe_col = resolved_column.replace('"', '""')
+                where_clauses.append(f'"{safe_col}" IN ({placeholders})')
+                query_params.extend(values)
+
+        if request.numeric_range:
+            for requested_column, bounds in request.numeric_range.items():
+                resolved_column = _resolve_column_name(requested_column, table_columns)
+                if not resolved_column:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Unknown numeric range column: '{requested_column}'.",
+                    )
+                safe_col = resolved_column.replace('"', '""')
+                if bounds.min is not None:
+                    where_clauses.append(f'CAST("{safe_col}" AS REAL) >= ?')
+                    query_params.append(bounds.min)
+                if bounds.max is not None:
+                    where_clauses.append(f'CAST("{safe_col}" AS REAL) <= ?')
+                    query_params.append(bounds.max)
+
+        where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        sql = f'SELECT * FROM "{safe_table_name}"{where_sql}'
+        filtered_df = pd.read_sql_query(sql, connection, params=query_params)
+
+    rows = filtered_df.where(pd.notna(filtered_df), None).to_dict(orient="records")
+    return {
+        "dataset_id": request.dataset_id,
+        "total_count": int(len(rows)),
+        "rows": rows,
+    }
+
+
 @router.post("/upload")
 async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
     filename = file.filename or ""
@@ -257,5 +347,5 @@ async def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
 
 
 @router.post("/filter")
-async def filter_dataset() -> dict[str, str]:
-    return {"message": "Not implemented yet. Next slice will apply dataframe filters."}
+async def filter_dataset(request: FilterRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(_filter_dataset, request)
