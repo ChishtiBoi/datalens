@@ -41,12 +41,24 @@ def _sanitize_identifier(value: str, fallback: str) -> str:
     return cleaned
 
 
+def _sanitize_identifier_preserve_case(value: str, fallback: str) -> str:
+    """Make a safe SQL identifier while keeping the original letter casing."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        cleaned = fallback
+    if not re.match(r"^[a-zA-Z_]", cleaned):
+        cleaned = f"{fallback}_{cleaned}"
+    return cleaned
+
+
 def _sanitize_columns(columns: list[str]) -> list[str]:
+    """Normalize CSV headers to safe SQLite identifiers; preserve original casing."""
     sanitized_columns: list[str] = []
     used: dict[str, int] = {}
 
     for idx, column in enumerate(columns, start=1):
-        base = _sanitize_identifier(str(column), f"col_{idx}")
+        base = _sanitize_identifier_preserve_case(str(column), f"col_{idx}")
         count = used.get(base, 0)
         if count:
             safe_name = f"{base}_{count + 1}"
@@ -56,6 +68,60 @@ def _sanitize_columns(columns: list[str]) -> list[str]:
         sanitized_columns.append(safe_name)
 
     return sanitized_columns
+
+
+def get_column_map(dataset_id: str) -> dict[str, str]:
+    """
+    Map lowercase column name -> exact SQLite column name for this dataset table.
+    First occurrence wins if two columns normalize to the same lowercase key.
+    """
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No datasets found.")
+
+    with sqlite3.connect(DB_PATH) as connection:
+        table_name = _get_dataset_table_name(connection, dataset_id)
+        if not table_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Dataset '{dataset_id}' not found.",
+            )
+        safe_table_name = table_name.replace('"', '""')
+        cursor = connection.execute(f'PRAGMA table_info("{safe_table_name}")')
+        table_columns = [str(row[1]) for row in cursor.fetchall()]
+
+    column_map: dict[str, str] = {}
+    for column in table_columns:
+        key = column.lower()
+        if key not in column_map:
+            column_map[key] = column
+    return column_map
+
+
+def _resolve_requested_column(requested: str, column_map: dict[str, str]) -> str | None:
+    """Resolve a client-supplied column name (any casing) to the real SQLite column name."""
+    if not requested or not column_map:
+        return None
+
+    actual_columns = list(dict.fromkeys(column_map.values()))
+
+    if requested in actual_columns:
+        return requested
+
+    lower_key = requested.lower()
+    if lower_key in column_map:
+        return column_map[lower_key]
+
+    sanitized_requested = _sanitize_identifier(requested, "col")
+    for column in actual_columns:
+        if _sanitize_identifier(column, "col") == sanitized_requested:
+            return column
+
+    sanitized_preserve = _sanitize_identifier_preserve_case(requested, "col").lower()
+    for column in actual_columns:
+        if _sanitize_identifier_preserve_case(column, "col").lower() == sanitized_preserve:
+            return column
+
+    return None
 
 
 def _persist_dataframe(
@@ -202,25 +268,11 @@ def _build_profile(dataset_id: str) -> dict[str, Any]:
     }
 
 
-def _resolve_column_name(requested_name: str, table_columns: list[str]) -> str | None:
-    if requested_name in table_columns:
-        return requested_name
-
-    table_lookup = {column.lower(): column for column in table_columns}
-    lower_requested = requested_name.lower()
-    if lower_requested in table_lookup:
-        return table_lookup[lower_requested]
-
-    sanitized_requested = _sanitize_identifier(requested_name, "col")
-    for column in table_columns:
-        if _sanitize_identifier(column, "col") == sanitized_requested:
-            return column
-    return None
-
-
 def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
     if not DB_PATH.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No datasets found.")
+
+    column_map = get_column_map(request.dataset_id)
 
     with sqlite3.connect(DB_PATH) as connection:
         table_name = _get_dataset_table_name(connection, request.dataset_id)
@@ -231,8 +283,6 @@ def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
             )
 
         safe_table_name = table_name.replace('"', '""')
-        cursor = connection.execute(f'PRAGMA table_info("{safe_table_name}")')
-        table_columns = [str(row[1]) for row in cursor.fetchall()]
 
         where_clauses: list[str] = []
         query_params: list[Any] = []
@@ -241,7 +291,7 @@ def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
             for requested_column, values in request.categorical_filters.items():
                 if not values:
                     continue
-                resolved_column = _resolve_column_name(requested_column, table_columns)
+                resolved_column = _resolve_requested_column(requested_column, column_map)
                 if not resolved_column:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -249,12 +299,16 @@ def _filter_dataset(request: FilterRequest) -> dict[str, Any]:
                     )
                 placeholders = ", ".join("?" for _ in values)
                 safe_col = resolved_column.replace('"', '""')
-                where_clauses.append(f'"{safe_col}" IN ({placeholders})')
-                query_params.extend(values)
+                trimmed_values = [str(v).strip() for v in values]
+                # trim(cast(...)) so CSV whitespace / padding does not break IN matching
+                where_clauses.append(
+                    f'trim(cast("{safe_col}" AS TEXT)) IN ({placeholders})'
+                )
+                query_params.extend(trimmed_values)
 
         if request.numeric_range:
             for requested_column, bounds in request.numeric_range.items():
-                resolved_column = _resolve_column_name(requested_column, table_columns)
+                resolved_column = _resolve_requested_column(requested_column, column_map)
                 if not resolved_column:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -342,7 +396,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
         )
 
     try:
-        dataframe = pd.read_csv(io.BytesIO(file_bytes))
+        dataframe = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python')
     except pd.errors.EmptyDataError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from app.api.routes.datasets import _build_profile
+from app.api.routes.datasets import _build_profile, _resolve_requested_column, get_column_map
 from app.core.config import settings
 
 
@@ -50,19 +50,15 @@ def _load_dataset(dataset_id: str) -> pd.DataFrame:
         return pd.read_sql_query(f'SELECT * FROM "{table_name}"', connection)
 
 
-def _normalize_key(value: str) -> str:
-    return value.strip().lower()
+def _resolve_column(dataset_id: str, requested: str) -> str:
+    column_map = get_column_map(dataset_id)
+    resolved = _resolve_requested_column(requested, column_map)
+    if not resolved:
+        raise ValueError(f"Unknown column '{requested}'.")
+    return resolved
 
 
-def _resolve_column(dataframe: pd.DataFrame, requested: str) -> str:
-    requested_norm = _normalize_key(requested)
-    for column in dataframe.columns:
-        if _normalize_key(str(column)) == requested_norm:
-            return str(column)
-    raise ValueError(f"Unknown column '{requested}'.")
-
-
-def _apply_filters(dataframe: pd.DataFrame, filters: dict[str, Any] | None) -> pd.DataFrame:
+def _apply_filters(dataset_id: str, dataframe: pd.DataFrame, filters: dict[str, Any] | None) -> pd.DataFrame:
     if not filters:
         return dataframe
 
@@ -71,12 +67,14 @@ def _apply_filters(dataframe: pd.DataFrame, filters: dict[str, Any] | None) -> p
     for column_name, allowed in categorical.items():
         if not allowed:
             continue
-        column = _resolve_column(filtered, column_name)
-        filtered = filtered[filtered[column].astype(str).isin([str(item) for item in allowed])]
+        column = _resolve_column(dataset_id, column_name)
+        trimmed_allowed = [str(item).strip() for item in allowed]
+        series_trimmed = filtered[column].astype(str).str.strip()
+        filtered = filtered[series_trimmed.isin(trimmed_allowed)]
 
     numeric = filters.get("numeric_range", {})
     for column_name, bounds in numeric.items():
-        column = _resolve_column(filtered, column_name)
+        column = _resolve_column(dataset_id, column_name)
         numeric_series = pd.to_numeric(filtered[column], errors="coerce")
         lower = bounds.get("min")
         upper = bounds.get("max")
@@ -97,7 +95,7 @@ def query_data(
     aggregate_fn: str | None = None,
 ) -> dict[str, Any]:
     dataframe = _load_dataset(dataset_id)
-    filtered = _apply_filters(dataframe, filters)
+    filtered = _apply_filters(dataset_id, dataframe, filters)
 
     if not group_by:
         return {
@@ -106,13 +104,13 @@ def query_data(
         }
 
     group_columns = [group_by] if isinstance(group_by, str) else group_by
-    resolved_groups = [_resolve_column(filtered, column) for column in group_columns]
+    resolved_groups = [_resolve_column(dataset_id, column) for column in group_columns]
     grouped = filtered.groupby(resolved_groups, dropna=False)
 
     if not aggregate_column or not aggregate_fn:
         result = grouped.size().reset_index(name="count")
     else:
-        agg_column = _resolve_column(filtered, aggregate_column)
+        agg_column = _resolve_column(dataset_id, aggregate_column)
         agg_key = aggregate_fn.lower()
         allowed = {"sum", "mean", "count", "min", "max", "median"}
         if agg_key not in allowed:
@@ -134,7 +132,7 @@ def query_data(
 
 def get_statistics(dataset_id: str, column: str) -> dict[str, Any]:
     dataframe = _load_dataset(dataset_id)
-    resolved = _resolve_column(dataframe, column)
+    resolved = _resolve_column(dataset_id, column)
     numeric = pd.to_numeric(dataframe[resolved], errors="coerce").dropna()
     if numeric.empty:
         raise ValueError(f"Column '{column}' has no numeric values.")
@@ -151,7 +149,7 @@ def get_statistics(dataset_id: str, column: str) -> dict[str, Any]:
 
 def get_top_values(dataset_id: str, column: str, n: int = 5) -> dict[str, Any]:
     dataframe = _load_dataset(dataset_id)
-    resolved = _resolve_column(dataframe, column)
+    resolved = _resolve_column(dataset_id, column)
     top_n = max(1, min(int(n), 50))
     counts = dataframe[resolved].astype(str).value_counts(dropna=False).head(top_n)
     rows = [{"value": value, "count": int(count)} for value, count in counts.items()]
@@ -242,16 +240,20 @@ def _get_openai_client() -> OpenAI:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported LLM_PROVIDER. Expected 'openai'.",
         )
-    if not settings.openai_api_key:
+    if not settings.openai_api_key.strip():
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OPENAI_API_KEY is not configured.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "OPENAI_API_KEY is not set. Add it to the project root `.env` or `backend/.env`, "
+                "or export it in your environment, then restart the API server."
+            ),
         )
     return OpenAI(api_key=settings.openai_api_key)
 
 
 @router.post("/chat")
 async def chat_with_data(request: ChatRequest) -> dict[str, str]:
+    get_column_map(request.dataset_id)
     client = _get_openai_client()
     messages: list[dict[str, Any]] = [
         {
@@ -317,6 +319,7 @@ async def chat_with_data(request: ChatRequest) -> dict[str, str]:
 
 @router.post("/summary")
 async def generate_summary(request: SummaryRequest) -> dict[str, str]:
+    get_column_map(request.dataset_id)
     client = _get_openai_client()
     profile = _build_profile(request.dataset_id)
     response = client.chat.completions.create(

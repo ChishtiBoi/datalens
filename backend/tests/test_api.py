@@ -160,6 +160,21 @@ def test_filter_education_phd_returns_fewer_rows(client: TestClient, uploaded_da
     assert filtered.json()["total_count"] < all_rows.json()["total_count"]
 
 
+def test_filter_accepts_lowercase_column_keys(client: TestClient, uploaded_dataset: dict) -> None:
+    dataset_id = uploaded_dataset["dataset_id"]
+    filtered = client.post(
+        "/filter",
+        json={"dataset_id": dataset_id, "categorical_filters": {"education": ["PhD"]}},
+    )
+    pascal = client.post(
+        "/filter",
+        json={"dataset_id": dataset_id, "categorical_filters": {"Education": ["PhD"]}},
+    )
+    assert filtered.status_code == 200
+    assert pascal.status_code == 200
+    assert filtered.json()["total_count"] == pascal.json()["total_count"]
+
+
 def test_filter_clear_filters_returns_all_2240_rows(
     client: TestClient, uploaded_dataset: dict
 ) -> None:

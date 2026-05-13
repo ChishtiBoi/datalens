@@ -35,18 +35,50 @@ const CAMPAIGN_COLUMNS = [
 const CHART_COLORS = ['#1d4ed8', '#0f766e', '#9333ea', '#dc2626', '#c2410c', '#0f766e']
 const EDUCATION_OPTIONS = ['Graduation', 'PhD', 'Master', 'Basic', '2n Cycle']
 
+const formatApiDetail = (body) => {
+  const detail = body?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => (typeof item === 'object' && item?.msg ? item.msg : JSON.stringify(item)))
+      .join(' ')
+  }
+  return null
+}
+
 const normalizeKey = (value) => value?.toString().trim().toLowerCase() ?? ''
 
-const getValue = (row, ...aliases) => {
-  for (const alias of aliases) {
-    const exact = row[alias]
-    if (exact !== undefined) return exact
-    const normalizedAlias = normalizeKey(alias)
-    for (const key of Object.keys(row)) {
-      if (normalizeKey(key) === normalizedAlias) return row[key]
+/** Match profile.columns[].column_name to logical aliases (case-insensitive); return exact API name. */
+const findProfileColumnName = (profile, ...aliases) => {
+  if (!profile?.columns?.length) return null
+  const wanted = new Set(aliases.map((a) => normalizeKey(a)))
+  for (const col of profile.columns) {
+    if (wanted.has(normalizeKey(col.column_name))) {
+      return col.column_name
     }
   }
   return null
+}
+
+/** Single source of truth: GET /profile column_name strings for row access and filter keys. */
+const buildColumnRefs = (profile) => {
+  if (!profile?.columns) return null
+  const spending = {}
+  for (const key of SPENDING_COLUMNS) {
+    spending[key] = findProfileColumnName(profile, key)
+  }
+  const campaigns = {}
+  for (const key of CAMPAIGN_COLUMNS) {
+    campaigns[key] = findProfileColumnName(profile, key)
+  }
+  return {
+    education: findProfileColumnName(profile, 'education'),
+    maritalStatus: findProfileColumnName(profile, 'marital_status', 'marital status'),
+    income: findProfileColumnName(profile, 'income'),
+    dtCustomer: findProfileColumnName(profile, 'dt_customer', 'dt customer'),
+    spending,
+    campaigns,
+  }
 }
 
 const toNumber = (value) => {
@@ -55,22 +87,25 @@ const toNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null
 }
 
-const averageSpendingByEducation = (rows) => {
+const averageSpendingByEducation = (rows, refs) => {
+  const edCol = refs?.education
+  if (!edCol) return []
   const bucket = new Map()
   for (const row of rows) {
-    const education = getValue(row, 'education') ?? 'Unknown'
+    const education = row[edCol] ?? 'Unknown'
     const key = education.toString()
     if (!bucket.has(key)) {
       bucket.set(key, { education: key, sums: {}, count: 0 })
-      SPENDING_COLUMNS.forEach((column) => {
-        bucket.get(key).sums[column] = 0
+      SPENDING_COLUMNS.forEach((canonicalKey) => {
+        bucket.get(key).sums[canonicalKey] = 0
       })
     }
     const entry = bucket.get(key)
     entry.count += 1
-    SPENDING_COLUMNS.forEach((column) => {
-      const numeric = toNumber(getValue(row, column))
-      entry.sums[column] += numeric ?? 0
+    SPENDING_COLUMNS.forEach((canonicalKey) => {
+      const dbCol = refs?.spending?.[canonicalKey]
+      const numeric = dbCol ? toNumber(row[dbCol]) : null
+      entry.sums[canonicalKey] += numeric ?? 0
     })
   }
 
@@ -85,19 +120,23 @@ const averageSpendingByEducation = (rows) => {
   }))
 }
 
-const customerCountByMaritalStatus = (rows) => {
+const customerCountByMaritalStatus = (rows, refs) => {
+  const col = refs?.maritalStatus
+  if (!col) return []
   const counts = new Map()
   for (const row of rows) {
-    const status = getValue(row, 'marital_status') ?? 'Unknown'
+    const status = row[col] ?? 'Unknown'
     const key = status.toString()
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return Array.from(counts.entries()).map(([maritalStatus, count]) => ({ maritalStatus, count }))
 }
 
-const incomeHistogram = (rows) => {
+const incomeHistogram = (rows, refs) => {
+  const col = refs?.income
+  if (!col) return []
   const incomes = rows
-    .map((row) => toNumber(getValue(row, 'income')))
+    .map((row) => toNumber(row[col]))
     .filter((value) => value !== null)
   if (!incomes.length) return []
 
@@ -116,10 +155,12 @@ const incomeHistogram = (rows) => {
   return bins
 }
 
-const enrollmentsByMonth = (rows) => {
+const enrollmentsByMonth = (rows, refs) => {
+  const col = refs?.dtCustomer
+  if (!col) return []
   const counts = new Map()
   for (const row of rows) {
-    const raw = getValue(row, 'dt_customer')
+    const raw = row[col]
     if (!raw) continue
     const date = new Date(raw)
     if (Number.isNaN(date.getTime())) continue
@@ -131,13 +172,14 @@ const enrollmentsByMonth = (rows) => {
     .map(([month, count]) => ({ month, count }))
 }
 
-const campaignAcceptanceRates = (rows) => {
+const campaignAcceptanceRates = (rows, refs) => {
   const totals = Object.fromEntries(CAMPAIGN_COLUMNS.map((column) => [column, 0]))
   const rowCount = rows.length || 1
   for (const row of rows) {
-    CAMPAIGN_COLUMNS.forEach((column) => {
-      const value = toNumber(getValue(row, column))
-      totals[column] += value ?? 0
+    CAMPAIGN_COLUMNS.forEach((canonicalKey) => {
+      const dbCol = refs?.campaigns?.[canonicalKey]
+      const value = dbCol ? toNumber(row[dbCol]) : null
+      totals[canonicalKey] += value ?? 0
     })
   }
   return CAMPAIGN_COLUMNS.map((column) => ({
@@ -155,28 +197,42 @@ const sampleRows = (rows, maxSize) => {
   return sampled
 }
 
-const incomeVsSpendingScatter = (rows) =>
-  rows
+const incomeVsSpendingScatter = (rows, refs) => {
+  const incCol = refs?.income
+  if (!incCol) return []
+  return rows
     .map((row) => {
-      const income = toNumber(getValue(row, 'income'))
+      const income = toNumber(row[incCol])
       if (income === null) return null
-      const totalSpending = SPENDING_COLUMNS.reduce((sum, column) => {
-        const value = toNumber(getValue(row, column))
+      const totalSpending = SPENDING_COLUMNS.reduce((sum, canonicalKey) => {
+        const dbCol = refs?.spending?.[canonicalKey]
+        const value = dbCol ? toNumber(row[dbCol]) : null
         return sum + (value ?? 0)
       }, 0)
       return { income, spending: Number(totalSpending.toFixed(2)) }
     })
     .filter(Boolean)
+}
 
-const buildCharts = (rows) => {
+const emptyCharts = () => ({
+  avgSpendingByEducation: [],
+  countByMaritalStatus: [],
+  incomeDistribution: [],
+  enrollmentByMonth: [],
+  campaignRates: [],
+  incomeVsSpending: [],
+})
+
+const buildCharts = (rows, refs) => {
+  if (!refs) return emptyCharts()
   const sampledRows = sampleRows(rows, 500)
   return {
-    avgSpendingByEducation: averageSpendingByEducation(rows),
-    countByMaritalStatus: customerCountByMaritalStatus(rows),
-    incomeDistribution: incomeHistogram(sampledRows),
-    enrollmentByMonth: enrollmentsByMonth(rows),
-    campaignRates: campaignAcceptanceRates(rows),
-    incomeVsSpending: incomeVsSpendingScatter(sampledRows),
+    avgSpendingByEducation: averageSpendingByEducation(rows, refs),
+    countByMaritalStatus: customerCountByMaritalStatus(rows, refs),
+    incomeDistribution: incomeHistogram(sampledRows, refs),
+    enrollmentByMonth: enrollmentsByMonth(rows, refs),
+    campaignRates: campaignAcceptanceRates(rows, refs),
+    incomeVsSpending: incomeVsSpendingScatter(sampledRows, refs),
   }
 }
 
@@ -195,6 +251,8 @@ function App() {
   const [maritalOptions, setMaritalOptions] = useState([])
   const [incomeMin, setIncomeMin] = useState(0)
   const [incomeMax, setIncomeMax] = useState(120000)
+  const [filteredRowCount, setFilteredRowCount] = useState(null)
+  const [columnRefs, setColumnRefs] = useState(null)
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState([])
   const [isChatLoading, setIsChatLoading] = useState(false)
@@ -231,6 +289,7 @@ function App() {
 
   const loadDatasetById = async (nextDatasetId, metadata = null) => {
     setDatasetId(nextDatasetId)
+    setColumnRefs(null)
     setIsLoadingDashboard(true)
     setError('')
     setEducationFilters([])
@@ -247,6 +306,8 @@ function App() {
       throw new Error(profileBody.detail || 'Failed to load dataset profile.')
     }
     setProfile(profileBody)
+    const refs = buildColumnRefs(profileBody)
+    setColumnRefs(refs)
 
     const filterResponse = await fetch(`${API_BASE_URL}/filter`, {
       method: 'POST',
@@ -259,10 +320,16 @@ function App() {
     }
 
     const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
-    setCharts(buildCharts(allRows))
-    const maritalFromData = Array.from(
-      new Set(allRows.map((row) => getValue(row, 'marital_status')).filter(Boolean)),
-    ).map((value) => value.toString())
+    setFilteredRowCount(
+      typeof filterBody.total_count === 'number' ? filterBody.total_count : allRows.length,
+    )
+    setCharts(buildCharts(allRows, refs))
+    const mCol = refs?.maritalStatus
+    const maritalFromData = mCol
+      ? Array.from(new Set(allRows.map((row) => row[mCol]).filter(Boolean))).map((value) =>
+          value.toString(),
+        )
+      : []
     setMaritalOptions(maritalFromData.sort((a, b) => a.localeCompare(b)))
 
     if (metadata) {
@@ -289,23 +356,29 @@ function App() {
     setUploadResult(null)
 
     try {
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
         body: formData,
       })
 
       const responseBody = await response.json().catch(() => ({}))
       if (!response.ok) {
-        throw new Error(responseBody.detail || 'Upload failed. Please try again.')
+        throw new Error(formatApiDetail(responseBody) || 'Upload failed. Please try again.')
       }
 
       setUploadResult(responseBody)
       await loadDatasetById(responseBody.dataset_id, responseBody)
     } catch (uploadError) {
-      setError(uploadError.message || 'Unexpected error while uploading file.')
+      const fallback =
+        uploadError instanceof TypeError && uploadError.message === 'Failed to fetch'
+          ? `Could not reach the API at ${API_BASE_URL}. Start the backend (e.g. uvicorn) and ensure the URL matches.`
+          : uploadError.message || 'Unexpected error while uploading file.'
+      setError(fallback)
       setProfile(null)
       setCharts(null)
       setDatasetId('')
+      setFilteredRowCount(null)
+      setColumnRefs(null)
       setSummaryText('')
     } finally {
       setIsUploading(false)
@@ -339,7 +412,7 @@ function App() {
   }, [hasInitialized])
 
   useEffect(() => {
-    if (!datasetId) return
+    if (!datasetId || !columnRefs) return
 
     const applyFilters = async () => {
       setIsLoadingDashboard(true)
@@ -349,12 +422,19 @@ function App() {
       const payload = { dataset_id: datasetId }
       if (educationFilters.length || maritalFilters.length) {
         payload.categorical_filters = {}
-        if (educationFilters.length) payload.categorical_filters.Education = educationFilters
-        if (maritalFilters.length) payload.categorical_filters.Marital_Status = maritalFilters
+        if (educationFilters.length && columnRefs.education) {
+          payload.categorical_filters[columnRefs.education] = educationFilters
+        }
+        if (maritalFilters.length && columnRefs.maritalStatus) {
+          payload.categorical_filters[columnRefs.maritalStatus] = maritalFilters
+        }
+        if (Object.keys(payload.categorical_filters).length === 0) {
+          delete payload.categorical_filters
+        }
       }
-      if (incomeMin > 0 || incomeMax < 120000) {
+      if (columnRefs.income) {
         payload.numeric_range = {
-          Income: { min: incomeMin, max: incomeMax },
+          [columnRefs.income]: { min: incomeMin, max: incomeMax },
         }
       }
 
@@ -366,12 +446,16 @@ function App() {
         })
         const responseBody = await response.json().catch(() => ({}))
         if (!response.ok) {
-          throw new Error(responseBody.detail || 'Failed to apply filters.')
+          throw new Error(formatApiDetail(responseBody) || 'Failed to apply filters.')
         }
 
         if (filterRequestId.current !== requestId) return
         const rows = Array.isArray(responseBody.rows) ? responseBody.rows : []
-        setCharts(buildCharts(rows))
+        setError('')
+        setFilteredRowCount(
+          typeof responseBody.total_count === 'number' ? responseBody.total_count : rows.length,
+        )
+        setCharts(buildCharts(rows, columnRefs))
       } catch (filterError) {
         if (filterRequestId.current !== requestId) return
         setError(filterError.message || 'Failed to refresh dashboard with filters.')
@@ -381,13 +465,13 @@ function App() {
     }
 
     applyFilters()
-  }, [datasetId, educationFilters, maritalFilters, incomeMin, incomeMax])
+  }, [datasetId, educationFilters, maritalFilters, incomeMin, incomeMax, columnRefs])
 
   const clearAllFilters = () => {
     setEducationFilters([])
     setMaritalFilters([])
     setIncomeMin(0)
-    setIncomeMax(120000)
+    setIncomeMax(999999)
   }
 
   const handleSendChat = async () => {
@@ -544,6 +628,17 @@ function App() {
                 Profile loaded: <span className="font-semibold">{profile.row_count}</span> rows and{' '}
                 <span className="font-semibold">{profile.column_count}</span> columns.
               </p>
+              {filteredRowCount != null &&
+                (educationFilters.length > 0 ||
+                  maritalFilters.length > 0 ||
+                  incomeMin > 0 ||
+                  incomeMax < 120000 ||
+                  filteredRowCount !== profile.row_count) && (
+                  <p className="mt-1 text-slate-600">
+                    Charts use <span className="font-semibold">{filteredRowCount}</span> row
+                    {filteredRowCount === 1 ? '' : 's'} after filters.
+                  </p>
+                )}
             </div>
 
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -601,7 +696,7 @@ function App() {
                   <input
                     type="range"
                     min="0"
-                    max="120000"
+                    max="999999"
                     value={incomeMin}
                     onChange={(event) => {
                       const nextMin = Number(event.target.value)
@@ -612,7 +707,7 @@ function App() {
                   <input
                     type="range"
                     min="0"
-                    max="120000"
+                    max="999999"
                     value={incomeMax}
                     onChange={(event) => {
                       const nextMax = Number(event.target.value)
@@ -631,7 +726,10 @@ function App() {
                 </button>
               </aside>
 
-              <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2">
+              <div
+                className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2"
+                key={`charts-${datasetId}-${columnRefs?.education ?? ''}-${columnRefs?.maritalStatus ?? ''}-${columnRefs?.income ?? ''}-${[...educationFilters].sort().join(',')}-${[...maritalFilters].sort().join(',')}-${incomeMin}-${incomeMax}`}
+              >
                 <article className="rounded-xl border border-slate-200 bg-white p-4">
                 <h3 className="mb-4 text-sm font-semibold text-slate-700">
                   1. Average Spending by Education
