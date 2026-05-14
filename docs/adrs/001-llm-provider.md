@@ -58,3 +58,10 @@ with the most stable and documented tool-calling behavior.
 - **We gained:** Reliable, well-documented tool-calling that reduced integration time significantly
 - **Risk accepted:** API cost if usage scales up; mitigated by limiting max_tokens and caching profile data
 - **Future consideration:** If cost becomes an issue, Gemini's tool-calling has matured and could be a drop-in replacement
+
+---
+
+## Related
+
+- [ADR 003 — Tool-calling pattern](003-tool-use-pattern.md) (how GPT-4o is invoked from the chat endpoint)
+- [ADR 002 — SQLite schema](002-sqlite-schema.md) (data the tools query against)

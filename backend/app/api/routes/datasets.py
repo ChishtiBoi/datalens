@@ -396,7 +396,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, str | int]:
         )
 
     try:
-        dataframe = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python')
+        dataframe = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python")
     except pd.errors.EmptyDataError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

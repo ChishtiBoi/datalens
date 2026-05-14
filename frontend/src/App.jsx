@@ -32,7 +32,7 @@ const CAMPAIGN_COLUMNS = [
   'acceptedcmp5',
   'response',
 ]
-const CHART_COLORS = ['#1d4ed8', '#0f766e', '#9333ea', '#dc2626', '#c2410c', '#0f766e']
+const CHART_COLORS = ['#1d4ed8', '#0f766e', '#9333ea', '#dc2626', '#c2410c', '#64748b']
 const EDUCATION_OPTIONS = ['Graduation', 'PhD', 'Master', 'Basic', '2n Cycle']
 
 const formatApiDetail = (body) => {
@@ -261,6 +261,13 @@ function App() {
   const [hasInitialized, setHasInitialized] = useState(false)
   const inputRef = useRef(null)
   const filterRequestId = useRef(0)
+  const chatScrollRef = useRef(null)
+
+  useEffect(() => {
+    const root = chatScrollRef.current
+    if (!root) return
+    root.scrollTop = root.scrollHeight
+  }, [chatMessages, isChatLoading])
 
   const setFile = (file) => {
     setError('')
@@ -303,7 +310,7 @@ function App() {
     const profileResponse = await fetch(`${API_BASE_URL}/profile/${nextDatasetId}`)
     const profileBody = await profileResponse.json().catch(() => ({}))
     if (!profileResponse.ok) {
-      throw new Error(profileBody.detail || 'Failed to load dataset profile.')
+      throw new Error(formatApiDetail(profileBody) || 'Failed to load dataset profile.')
     }
     setProfile(profileBody)
     const refs = buildColumnRefs(profileBody)
@@ -316,7 +323,7 @@ function App() {
     })
     const filterBody = await filterResponse.json().catch(() => ({}))
     if (!filterResponse.ok) {
-      throw new Error(filterBody.detail || 'Failed to load dataset rows.')
+      throw new Error(formatApiDetail(filterBody) || 'Failed to load dataset rows.')
     }
 
     const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
@@ -394,7 +401,7 @@ function App() {
         const response = await fetch(`${API_BASE_URL}/datasets`)
         const body = await response.json().catch(() => ({}))
         if (!response.ok) {
-          throw new Error(body.detail || 'Failed to load previous datasets.')
+          throw new Error(formatApiDetail(body) || 'Failed to load previous datasets.')
         }
         const datasets = Array.isArray(body.datasets) ? body.datasets : []
         if (datasets.length > 0) {
@@ -496,7 +503,7 @@ function App() {
       })
       const responseBody = await response.json().catch(() => ({}))
       if (!response.ok) {
-        throw new Error(responseBody.detail || 'Failed to get assistant response.')
+        throw new Error(formatApiDetail(responseBody) || 'Failed to get assistant response.')
       }
 
       setChatMessages((prev) => [
@@ -504,10 +511,11 @@ function App() {
         { role: 'assistant', content: responseBody.answer || 'No answer returned.' },
       ])
     } catch (chatError) {
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: `Error: ${chatError.message || 'Chat request failed.'}` },
-      ])
+      const fallback =
+        chatError instanceof TypeError && chatError.message === 'Failed to fetch'
+          ? `Could not reach the API at ${API_BASE_URL}. Start the backend and ensure the URL matches.`
+          : chatError.message || 'Chat request failed.'
+      setChatMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${fallback}` }])
     } finally {
       setIsChatLoading(false)
     }
@@ -526,11 +534,15 @@ function App() {
       })
       const responseBody = await response.json().catch(() => ({}))
       if (!response.ok) {
-        throw new Error(responseBody.detail || 'Failed to generate executive summary.')
+        throw new Error(formatApiDetail(responseBody) || 'Failed to generate executive summary.')
       }
       setSummaryText(responseBody.summary || '')
     } catch (summaryError) {
-      setError(summaryError.message || 'Executive summary request failed.')
+      const fallback =
+        summaryError instanceof TypeError && summaryError.message === 'Failed to fetch'
+          ? `Could not reach the API at ${API_BASE_URL}. Start the backend and ensure the URL matches.`
+          : summaryError.message || 'Executive summary request failed.'
+      setError(fallback)
     } finally {
       setIsSummaryLoading(false)
     }
@@ -552,6 +564,15 @@ function App() {
           </p>
 
           <div
+            role="button"
+            tabIndex={0}
+            aria-label="CSV file drop zone. Press Enter to open file picker."
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                inputRef.current?.click()
+              }
+            }}
             onDragOver={(event) => {
               event.preventDefault()
               setIsDragging(true)
@@ -569,6 +590,7 @@ function App() {
               ref={inputRef}
               type="file"
               accept=".csv,text/csv"
+              aria-label="Choose CSV file"
               className="hidden"
               onChange={(event) => setFile(event.target.files?.[0])}
             />
@@ -583,6 +605,8 @@ function App() {
               type="button"
               onClick={handleUpload}
               disabled={isUploading}
+              aria-busy={isUploading}
+              aria-label={isUploading ? 'Uploading CSV file' : 'Upload CSV'}
               className="inline-flex min-w-36 items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {isUploading ? (
@@ -615,7 +639,12 @@ function App() {
         </section>
 
         {isLoadingDashboard && (
-          <div className="mt-8 flex items-center justify-center gap-2 text-slate-600">
+          <div
+            className="mt-8 flex items-center justify-center gap-2 text-slate-600"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading dashboard"
+          >
             <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
             Building dashboard...
           </div>
@@ -652,6 +681,7 @@ function App() {
                   <select
                     multiple
                     value={educationFilters}
+                    aria-label="Filter by education level"
                     onChange={(event) =>
                       setEducationFilters(
                         Array.from(event.target.selectedOptions, (option) => option.value),
@@ -674,6 +704,7 @@ function App() {
                   <select
                     multiple
                     value={maritalFilters}
+                    aria-label="Filter by marital status"
                     onChange={(event) =>
                       setMaritalFilters(
                         Array.from(event.target.selectedOptions, (option) => option.value),
@@ -698,6 +729,8 @@ function App() {
                     min="0"
                     max="999999"
                     value={incomeMin}
+                    aria-label="Minimum income"
+                    title="Minimum income"
                     onChange={(event) => {
                       const nextMin = Number(event.target.value)
                       setIncomeMin(Math.min(nextMin, incomeMax))
@@ -709,6 +742,8 @@ function App() {
                     min="0"
                     max="999999"
                     value={incomeMax}
+                    aria-label="Maximum income"
+                    title="Maximum income"
                     onChange={(event) => {
                       const nextMax = Number(event.target.value)
                       setIncomeMax(Math.max(nextMax, incomeMin))
@@ -843,15 +878,27 @@ function App() {
                 </article>
               </div>
 
-              <aside className="flex h-[880px] w-full flex-col rounded-xl border border-slate-200 bg-white lg:w-80">
+              <aside
+                className="flex h-[880px] w-full flex-col rounded-xl border border-slate-200 bg-white lg:w-80"
+                aria-label="Dataset chat assistant"
+              >
                 <div className="border-b border-slate-200 px-4 py-3">
                   <h3 className="text-sm font-semibold text-slate-700">Chat Assistant</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    Ask questions about the uploaded dataset.
+                    Ask questions about the uploaded dataset. Press Enter to send; Shift+Enter adds a new line in
+                    supporting clients.
                   </p>
                 </div>
 
-                <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+                <div
+                  ref={chatScrollRef}
+                  id="chat-messages"
+                  className="flex-1 space-y-3 overflow-y-auto px-3 py-3"
+                  role="log"
+                  aria-live="polite"
+                  aria-relevant="additions"
+                  aria-label="Chat messages"
+                >
                   {chatMessages.length === 0 && (
                     <p className="rounded-lg bg-slate-100 p-3 text-xs text-slate-500">
                       No messages yet. Try: "Which education group spends most on wines?"
@@ -874,7 +921,7 @@ function App() {
                     </div>
                   ))}
                   {isChatLoading && (
-                    <div className="flex justify-start">
+                    <div className="flex justify-start" aria-busy="true">
                       <div className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
                         Analyzing data...
                       </div>
@@ -883,9 +930,9 @@ function App() {
                 </div>
 
                 <div className="border-t border-slate-200 p-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      rows={2}
                       value={chatInput}
                       onChange={(event) => setChatInput(event.target.value)}
                       onKeyDown={(event) => {
@@ -895,12 +942,15 @@ function App() {
                         }
                       }}
                       placeholder="Ask about your data..."
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                      aria-label="Chat message"
+                      autoComplete="off"
+                      className="max-h-32 min-h-[2.5rem] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                     />
                     <button
                       type="button"
                       onClick={handleSendChat}
-                      disabled={isChatLoading || !datasetId}
+                      disabled={isChatLoading || !datasetId || !chatInput.trim()}
+                      aria-label="Send chat message"
                       className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Send
@@ -917,6 +967,12 @@ function App() {
                   type="button"
                   onClick={handleGenerateSummary}
                   disabled={isSummaryLoading || !datasetId}
+                  aria-busy={isSummaryLoading}
+                  aria-label={
+                    isSummaryLoading
+                      ? 'Generating executive summary'
+                      : 'Generate executive summary'
+                  }
                   className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSummaryLoading ? 'Generating...' : 'Generate Executive Summary'}

@@ -78,3 +78,10 @@ The LLM then composes a natural language answer grounded in those results.
 - **Future improvement:** A fourth tool — compute_correlation(col1, col2) 
   — would handle scatter plot questions more precisely
 
+---
+
+## Related
+
+- [ADR 001 — LLM provider](001-llm-provider.md) (OpenAI function-calling format)
+- [ADR 002 — SQLite schema](002-sqlite-schema.md) (where tool queries run)
+

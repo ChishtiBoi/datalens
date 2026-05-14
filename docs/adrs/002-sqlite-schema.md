@@ -65,7 +65,18 @@ remaining fully generic — it works with any CSV structure.
   SQL instead of in-memory pandas operations on full file loads
 - **Risk accepted:** Column name sanitization must be thorough to prevent 
   SQL injection via malicious CSV headers; we address this with a 
-  strict sanitize_column_name() function that whitelists alphanumeric 
-  and underscore characters only
+  strict header-to-SQL-identifier sanitization that allows alphanumeric 
+  characters and underscores (see `datasets.py` in the backend)
 - **Lesson learned:** EAV looked attractive initially for its flexibility 
   but the query complexity made it unworkable for a dashboard use case
+
+---
+
+## Related
+
+- [ADR 001 — LLM provider](001-llm-provider.md)
+- [ADR 003 — Tool-calling pattern](003-tool-use-pattern.md)
+
+### Implementation note
+
+Column safety is enforced in the backend by sanitization helpers (for example `_sanitize_identifier_preserve_case` and related functions in `backend/app/api/routes/datasets.py`), not a single function named `sanitize_column_name`.

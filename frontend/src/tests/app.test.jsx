@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import App from '../App'
 
 const makeJsonResponse = (status, body) => ({
@@ -172,6 +172,7 @@ describe('DataLens frontend', () => {
     render(<App />)
     await screen.findByText(/chat assistant/i)
     expect(screen.getByPlaceholderText(/ask about your data/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /chat message/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /send chat message/i })).toBeInTheDocument()
   })
 })

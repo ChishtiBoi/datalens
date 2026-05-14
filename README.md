@@ -20,6 +20,8 @@ of key insights.
 - **Ahmad Umer:** React frontend, dashboard visualizations, Recharts components
 - **Syed Murtaza Haroon:** Filter panel, chat UI, Vitest tests, ADRs and documentation
 
+**Architecture decisions:** summarized in [docs/adrs/README.md](docs/adrs/README.md) (LLM provider, SQLite storage, tool-calling).
+
 ---
 
 ## Prerequisites

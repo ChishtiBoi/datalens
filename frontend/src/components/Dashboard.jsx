@@ -3,16 +3,14 @@
     Scatter, ScatterChart, Tooltip, XAxis, YAxis, LineChart,
     Line, Legend,
   } from "recharts";
-  import { useEffect, useState } from "react";
+  import { useMemo } from "react";
   
   const COLORS = ["#6366f1","#22d3ee","#f59e0b","#10b981","#f43f5e","#a78bfa","#fb923c","#34d399"];
   
   export default function Dashboard({ profile, rows }) {
-    const [charts, setCharts] = useState([]);
-  
-    useEffect(() => {
-      if (!profile || !rows || rows.length === 0) return;
-      setCharts(buildCharts(profile, rows));
+    const charts = useMemo(() => {
+      if (!profile || !rows || rows.length === 0) return [];
+      return buildCharts(profile, rows);
     }, [profile, rows]);
   
     if (!profile || !rows || rows.length === 0) {
@@ -25,8 +23,8 @@
   
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {charts.map((chart, i) => (
-          <div key={i} className="bg-white rounded-2xl shadow p-4">
+        {charts.map((chart) => (
+          <div key={chart.title} className="bg-white rounded-2xl shadow p-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-3">{chart.title}</h3>
             {chart.component}
           </div>
@@ -38,10 +36,6 @@
   function buildCharts(profile, rows) {
     const charts = [];
     const cols = profile.columns;
-  
-    const categoricals = cols.filter((c) => c.detected_type === "categorical");
-    const numerics = cols.filter((c) => c.detected_type === "numeric");
-    const datetimes = cols.filter((c) => c.detected_type === "datetime");
   
     const spendingCols = ["MntWines","MntFruits","MntMeatProducts","MntFishProducts","MntSweetProducts","MntGoldProds"]
       .filter((name) => cols.find((c) => c.column_name === name));

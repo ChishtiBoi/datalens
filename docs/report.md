@@ -5,6 +5,8 @@
 **Team:** Muhammad Hamza, Ahmad Umer, Syed Murtaza Haroon  
 **Dataset:** Marketing Campaign (2,240 customers, 29 columns)
 
+**Documentation:** Architecture decision records (ADRs) are indexed in [adrs/README.md](adrs/README.md).
+
 ---
 
 ## 1. What the Agent Did Well
