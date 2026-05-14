@@ -14,6 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import Upload from './components/Upload'
 
 const API_BASE_URL = 'http://localhost:8000'
 const SPENDING_COLUMNS = [
@@ -89,7 +90,7 @@ const toNumber = (value) => {
 
 const averageSpendingByEducation = (rows, refs) => {
   const edCol = refs?.education
-  if (!edCol) return []
+  if (!edCol) return[]
   const bucket = new Map()
   for (const row of rows) {
     const education = row[edCol] ?? 'Unknown'
@@ -122,7 +123,7 @@ const averageSpendingByEducation = (rows, refs) => {
 
 const customerCountByMaritalStatus = (rows, refs) => {
   const col = refs?.maritalStatus
-  if (!col) return []
+  if (!col) return[]
   const counts = new Map()
   for (const row of rows) {
     const status = row[col] ?? 'Unknown'
@@ -134,11 +135,11 @@ const customerCountByMaritalStatus = (rows, refs) => {
 
 const incomeHistogram = (rows, refs) => {
   const col = refs?.income
-  if (!col) return []
+  if (!col) return[]
   const incomes = rows
     .map((row) => toNumber(row[col]))
     .filter((value) => value !== null)
-  if (!incomes.length) return []
+  if (!incomes.length) return[]
 
   const min = Math.min(...incomes)
   const max = Math.max(...incomes)
@@ -157,7 +158,7 @@ const incomeHistogram = (rows, refs) => {
 
 const enrollmentsByMonth = (rows, refs) => {
   const col = refs?.dtCustomer
-  if (!col) return []
+  if (!col) return[]
   const counts = new Map()
   for (const row of rows) {
     const raw = row[col]
@@ -191,7 +192,7 @@ const campaignAcceptanceRates = (rows, refs) => {
 
 const sampleRows = (rows, maxSize) => {
   if (rows.length <= maxSize) return rows
-  const sampled = []
+  const sampled =[]
   const step = rows.length / maxSize
   for (let i = 0; i < maxSize; i += 1) sampled.push(rows[Math.floor(i * step)])
   return sampled
@@ -199,7 +200,7 @@ const sampleRows = (rows, maxSize) => {
 
 const incomeVsSpendingScatter = (rows, refs) => {
   const incCol = refs?.income
-  if (!incCol) return []
+  if (!incCol) return[]
   return rows
     .map((row) => {
       const income = toNumber(row[incCol])
@@ -215,12 +216,12 @@ const incomeVsSpendingScatter = (rows, refs) => {
 }
 
 const emptyCharts = () => ({
-  avgSpendingByEducation: [],
+  avgSpendingByEducation:[],
   countByMaritalStatus: [],
   incomeDistribution: [],
-  enrollmentByMonth: [],
+  enrollmentByMonth:[],
   campaignRates: [],
-  incomeVsSpending: [],
+  incomeVsSpending:[],
 })
 
 const buildCharts = (rows, refs) => {
@@ -238,7 +239,6 @@ const buildCharts = (rows, refs) => {
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null)
-  const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
   const [error, setError] = useState('')
@@ -259,7 +259,6 @@ function App() {
   const [summaryText, setSummaryText] = useState('')
   const [isSummaryLoading, setIsSummaryLoading] = useState(false)
   const [hasInitialized, setHasInitialized] = useState(false)
-  const inputRef = useRef(null)
   const filterRequestId = useRef(0)
   const chatScrollRef = useRef(null)
 
@@ -285,13 +284,6 @@ function App() {
     }
 
     setSelectedFile(file)
-  }
-
-  const handleDrop = (event) => {
-    event.preventDefault()
-    setIsDragging(false)
-    const file = event.dataTransfer.files?.[0]
-    setFile(file)
   }
 
   const loadDatasetById = async (nextDatasetId, metadata = null) => {
@@ -326,7 +318,7 @@ function App() {
       throw new Error(formatApiDetail(filterBody) || 'Failed to load dataset rows.')
     }
 
-    const allRows = Array.isArray(filterBody.rows) ? filterBody.rows : []
+    const allRows = Array.isArray(filterBody.rows) ? filterBody.rows :[]
     setFilteredRowCount(
       typeof filterBody.total_count === 'number' ? filterBody.total_count : allRows.length,
     )
@@ -336,7 +328,7 @@ function App() {
       ? Array.from(new Set(allRows.map((row) => row[mCol]).filter(Boolean))).map((value) =>
           value.toString(),
         )
-      : []
+      :[]
     setMaritalOptions(maritalFromData.sort((a, b) => a.localeCompare(b)))
 
     if (metadata) {
@@ -349,14 +341,16 @@ function App() {
     }
   }
 
-  const handleUpload = async () => {
-    if (!selectedFile) {
+  const handleUpload = async (directFile = null) => {
+    const activeFile = (directFile && directFile.name) ? directFile : selectedFile;
+
+    if (!activeFile) {
       setError('Please choose a CSV file before uploading.')
       return
     }
 
     const formData = new FormData()
-    formData.append('file', selectedFile)
+    formData.append('file', activeFile)
 
     setIsUploading(true)
     setError('')
@@ -403,7 +397,7 @@ function App() {
         if (!response.ok) {
           throw new Error(formatApiDetail(body) || 'Failed to load previous datasets.')
         }
-        const datasets = Array.isArray(body.datasets) ? body.datasets : []
+        const datasets = Array.isArray(body.datasets) ? body.datasets :[]
         if (datasets.length > 0) {
           await loadDatasetById(datasets[0].dataset_id, datasets[0])
         }
@@ -457,7 +451,7 @@ function App() {
         }
 
         if (filterRequestId.current !== requestId) return
-        const rows = Array.isArray(responseBody.rows) ? responseBody.rows : []
+        const rows = Array.isArray(responseBody.rows) ? responseBody.rows :[]
         setError('')
         setFilteredRowCount(
           typeof responseBody.total_count === 'number' ? responseBody.total_count : rows.length,
@@ -552,17 +546,29 @@ function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <nav className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-5xl px-6 py-4">
-          <h1 className="text-xl font-bold tracking-tight">DataLens</h1>
+          <h1 className="text-xl font-bold tracking-tight text-indigo-600">DataLens</h1>
         </div>
       </nav>
 
       <main className="mx-auto w-full max-w-6xl p-6">
-        <section className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <h2 className="text-center text-2xl font-semibold">Upload CSV Dataset</h2>
-          <p className="mt-2 text-center text-sm text-slate-500">
-            Drag and drop your CSV file here, or click to browse.
-          </p>
+        
+        {/* NEW UPLOAD SECTION INTEGRATION */}
+        <section className="mx-auto w-full max-w-2xl">
+          <Upload 
+            onFileUpload={(file) => {
+              setFile(file);
+              handleUpload(file);
+            }} 
+          />
+          
+          {isUploading && (
+            <div className="mt-4 flex items-center justify-center gap-3 text-indigo-600 font-medium bg-indigo-50 py-3 rounded-xl border border-indigo-100 shadow-sm">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+              Uploading and analyzing dataset...
+            </div>
+          )}
 
+<<<<<<< HEAD
           <div
             role="button"
             tabIndex={0}
@@ -621,19 +627,18 @@ function App() {
           </div>
 
           {error && <p className="mt-4 text-center text-sm font-medium text-red-600">{error}</p>}
+=======
+          {error && <p className="mt-4 text-center text-sm font-medium text-red-600 bg-red-50 py-2 rounded-lg border border-red-100">{error}</p>}
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
 
           {uploadResult && (
-            <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
-              <p className="font-semibold text-emerald-800">Upload successful</p>
-              <p className="mt-2 text-emerald-900">
-                <span className="font-medium">Filename:</span> {uploadResult.filename}
-              </p>
-              <p className="text-emerald-900">
-                <span className="font-medium">Rows:</span> {uploadResult.row_count}
-              </p>
-              <p className="text-emerald-900">
-                <span className="font-medium">Columns:</span> {uploadResult.column_count}
-              </p>
+            <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50/50 backdrop-blur-sm p-4 text-sm shadow-sm">
+              <p className="font-semibold text-emerald-800 mb-2">✅ Upload successful</p>
+              <div className="flex justify-between text-emerald-900 bg-white/60 px-4 py-2 rounded-lg">
+                <p><span className="font-bold">File:</span> {uploadResult.filename}</p>
+                <p><span className="font-bold">Rows:</span> {uploadResult.row_count}</p>
+                <p><span className="font-bold">Columns:</span> {uploadResult.column_count}</p>
+              </div>
             </div>
           )}
         </section>
@@ -652,7 +657,7 @@ function App() {
 
         {profile && charts && (
           <section className="mt-8">
-            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm">
               <p>
                 Profile loaded: <span className="font-semibold">{profile.row_count}</span> rows and{' '}
                 <span className="font-semibold">{profile.column_count}</span> columns.
@@ -664,14 +669,14 @@ function App() {
                   incomeMax < 120000 ||
                   filteredRowCount !== profile.row_count) && (
                   <p className="mt-1 text-slate-600">
-                    Charts use <span className="font-semibold">{filteredRowCount}</span> row
+                    Charts use <span className="font-semibold text-indigo-600">{filteredRowCount}</span> row
                     {filteredRowCount === 1 ? '' : 's'} after filters.
                   </p>
                 )}
             </div>
 
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-              <aside className="w-full rounded-xl border border-slate-200 bg-white p-4 lg:sticky lg:top-4 lg:w-72">
+              <aside className="w-full rounded-xl border border-slate-200 bg-white p-4 lg:sticky lg:top-4 lg:w-72 shadow-sm">
                 <h3 className="text-sm font-semibold text-slate-700">Filters</h3>
 
                 <div className="mt-4">
@@ -687,7 +692,7 @@ function App() {
                         Array.from(event.target.selectedOptions, (option) => option.value),
                       )
                     }
-                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
                     {EDUCATION_OPTIONS.map((option) => (
                       <option key={option} value={option}>
@@ -710,7 +715,7 @@ function App() {
                         Array.from(event.target.selectedOptions, (option) => option.value),
                       )
                     }
-                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                    className="h-32 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
                     {maritalOptions.map((option) => (
                       <option key={option} value={option}>
@@ -735,7 +740,7 @@ function App() {
                       const nextMin = Number(event.target.value)
                       setIncomeMin(Math.min(nextMin, incomeMax))
                     }}
-                    className="w-full"
+                    className="w-full accent-indigo-600"
                   />
                   <input
                     type="range"
@@ -748,14 +753,14 @@ function App() {
                       const nextMax = Number(event.target.value)
                       setIncomeMax(Math.max(nextMax, incomeMin))
                     }}
-                    className="mt-2 w-full"
+                    className="mt-2 w-full accent-indigo-600"
                   />
                 </div>
 
                 <button
                   type="button"
                   onClick={clearAllFilters}
-                  className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
                 >
                   Clear All Filters
                 </button>
@@ -765,92 +770,92 @@ function App() {
                 className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2"
                 key={`charts-${datasetId}-${columnRefs?.education ?? ''}-${columnRefs?.maritalStatus ?? ''}-${columnRefs?.income ?? ''}-${[...educationFilters].sort().join(',')}-${[...maritalFilters].sort().join(',')}-${incomeMin}-${incomeMax}`}
               >
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   1. Average Spending by Education
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={charts.avgSpendingByEducation}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="education" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="wines" fill="#1d4ed8" />
-                      <Bar dataKey="fruits" fill="#0f766e" />
-                      <Bar dataKey="meat" fill="#9333ea" />
-                      <Bar dataKey="fish" fill="#dc2626" />
-                      <Bar dataKey="sweets" fill="#c2410c" />
-                      <Bar dataKey="gold" fill="#0f172a" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="education" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dy={10} />
+                      <YAxis tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
+                      <Tooltip cursor={{fill: '#f8fafc'}} />
+                      <Legend wrapperStyle={{fontSize: '12px'}} />
+                      <Bar dataKey="wines" fill="#4F46E5" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="fruits" fill="#06B6D4" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="meat" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="fish" fill="#F43F5E" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="sweets" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="gold" fill="#10B981" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
                 </article>
 
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   2. Customer Count by Marital Status
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={charts.countByMaritalStatus}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="maritalStatus" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#2563eb" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="maritalStatus" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dy={10} />
+                      <YAxis tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
+                      <Tooltip cursor={{fill: '#f8fafc'}} />
+                      <Bar dataKey="count" fill="#3b82f6" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
                 </article>
 
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   3. Income Distribution (10 bins)
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={charts.incomeDistribution}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="range" interval={1} angle={-25} textAnchor="end" height={60} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#0891b2" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="range" interval={1} angle={-25} textAnchor="end" height={60} tick={{fill: '#64748b', fontSize: 11}} axisLine={false} tickLine={false} />
+                      <YAxis tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
+                      <Tooltip cursor={{fill: '#f8fafc'}} />
+                      <Bar dataKey="count" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
                 </article>
 
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   4. Enrollment Count by Month
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={charts.enrollmentByMonth}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="month" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dy={10} />
+                      <YAxis tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
                       <Tooltip />
-                      <Line type="monotone" dataKey="count" stroke="#7c3aed" strokeWidth={2} />
+                      <Line type="monotone" dataKey="count" stroke="#8b5cf6" strokeWidth={3} activeDot={{r: 6}} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
                 </article>
 
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   5. Campaign Acceptance Rates
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={charts.campaignRates}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="campaign" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="rate" name="Acceptance Rate (%)">
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="campaign" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dy={10} />
+                      <YAxis tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
+                      <Tooltip cursor={{fill: '#f8fafc'}} />
+                      <Bar dataKey="rate" name="Acceptance Rate (%)" radius={[6, 6, 0, 0]}>
                         {charts.campaignRates.map((entry, index) => (
                           <Cell key={`${entry.campaign}-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                         ))}
@@ -860,30 +865,39 @@ function App() {
                 </div>
                 </article>
 
-                <article className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-4 text-sm font-semibold text-slate-700">
+                <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+                <h3 className="mb-4 text-sm font-semibold text-slate-800">
                   6. Income vs Total Spending (sampled)
                 </h3>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="income" name="Income" />
-                      <YAxis dataKey="spending" name="Total Spending" />
-                      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                      <Scatter data={charts.incomeVsSpending} fill="#dc2626" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="income" name="Income" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dy={10} />
+                      <YAxis dataKey="spending" name="Total Spending" tick={{fill: '#64748b', fontSize: 12}} axisLine={false} tickLine={false} dx={-10} />
+                      <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#cbd5e1' }} />
+                      <Scatter data={charts.incomeVsSpending} fill="#f43f5e" fillOpacity={0.7} />
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
                 </article>
               </div>
 
+<<<<<<< HEAD
               <aside
                 className="flex h-[880px] w-full flex-col rounded-xl border border-slate-200 bg-white lg:w-80"
                 aria-label="Dataset chat assistant"
               >
                 <div className="border-b border-slate-200 px-4 py-3">
                   <h3 className="text-sm font-semibold text-slate-700">Chat Assistant</h3>
+=======
+              <aside className="flex h-[880px] w-full flex-col rounded-xl border border-slate-200 bg-white lg:w-80 shadow-sm">
+                <div className="border-b border-slate-200 px-4 py-3 bg-slate-50/50 rounded-t-xl">
+                  <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                    Chat Assistant
+                  </h3>
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
                   <p className="mt-1 text-xs text-slate-500">
                     Ask questions about the uploaded dataset. Press Enter to send; Shift+Enter adds a new line in
                     supporting clients.
@@ -900,7 +914,7 @@ function App() {
                   aria-label="Chat messages"
                 >
                   {chatMessages.length === 0 && (
-                    <p className="rounded-lg bg-slate-100 p-3 text-xs text-slate-500">
+                    <p className="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-700 text-center">
                       No messages yet. Try: "Which education group spends most on wines?"
                     </p>
                   )}
@@ -910,10 +924,10 @@ function App() {
                       className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-[90%] rounded-xl px-3 py-2 text-sm ${
+                        className={`max-w-[90%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
                           message.role === 'user'
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-100 text-slate-800'
+                            ? 'bg-indigo-600 text-white rounded-tr-none'
+                            : 'bg-slate-100 text-slate-800 rounded-tl-none'
                         }`}
                       >
                         {message.content}
@@ -921,9 +935,17 @@ function App() {
                     </div>
                   ))}
                   {isChatLoading && (
+<<<<<<< HEAD
                     <div className="flex justify-start" aria-busy="true">
                       <div className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
                         Analyzing data...
+=======
+                    <div className="flex justify-start">
+                      <div className="rounded-2xl rounded-tl-none bg-slate-100 px-4 py-2 text-sm text-slate-500 flex items-center gap-2">
+                        <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></span>
+                        <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse" style={{ animationDelay: '0.2s'}}></span>
+                        <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse" style={{ animationDelay: '0.4s'}}></span>
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
                       </div>
                     </div>
                   )}
@@ -942,16 +964,25 @@ function App() {
                         }
                       }}
                       placeholder="Ask about your data..."
+<<<<<<< HEAD
                       aria-label="Chat message"
                       autoComplete="off"
                       className="max-h-32 min-h-[2.5rem] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+=======
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
                     />
                     <button
                       type="button"
                       onClick={handleSendChat}
+<<<<<<< HEAD
                       disabled={isChatLoading || !datasetId || !chatInput.trim()}
                       aria-label="Send chat message"
                       className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+=======
+                      disabled={isChatLoading || !datasetId}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 hover:bg-indigo-700 transition-colors"
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
                     >
                       Send
                     </button>
@@ -960,13 +991,17 @@ function App() {
               </aside>
             </div>
 
-            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5">
+            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <h3 className="text-base font-semibold text-slate-800">Executive Summary</h3>
+                <h3 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                  Executive Summary
+                </h3>
                 <button
                   type="button"
                   onClick={handleGenerateSummary}
                   disabled={isSummaryLoading || !datasetId}
+<<<<<<< HEAD
                   aria-busy={isSummaryLoading}
                   aria-label={
                     isSummaryLoading
@@ -974,17 +1009,23 @@ function App() {
                       : 'Generate executive summary'
                   }
                   className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+=======
+                  className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60 hover:bg-slate-800 transition-colors"
+>>>>>>> 68128ac51a0b8341ff82e37e6b7f440deeb5805c
                 >
                   {isSummaryLoading ? 'Generating...' : 'Generate Executive Summary'}
                 </button>
               </div>
 
               {isSummaryLoading && (
-                <p className="mt-3 text-sm text-slate-600">Generating executive summary...</p>
+                <p className="mt-4 text-sm text-indigo-600 flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+                  Generating AI executive summary...
+                </p>
               )}
 
               {!isSummaryLoading && summaryText && (
-                <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap">
+                <div className="mt-5 rounded-xl bg-slate-50 p-5 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap border border-slate-100">
                   {summaryText}
                 </div>
               )}
